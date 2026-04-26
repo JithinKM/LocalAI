@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -7,6 +8,7 @@ import 'services/download_service.dart';
 import 'services/model_state_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:read_pdf_text/read_pdf_text.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -87,11 +89,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   final GemmaService _llmService = GemmaService();
+  final ScrollController _scrollController = ScrollController();
   bool _isGenerating = false;
   bool _isLoadingModel = false;
   bool _isThinking = false;
   String? _loadedModelName;
   String? _currentChatId;
+  String? _attachedFileName;
+  String? _attachedFileContent;
+  int _currentContextSize = 1024; // Default to Fast Mode
+  String? _lastLoadedModelPath; // To reload if switching modes
 
   void _sendMessage() async {
     if (_controller.text.isEmpty || _isGenerating || _isLoadingModel) return;
@@ -108,27 +115,104 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
     
     final userPrompt = _controller.text;
+    String finalPrompt = userPrompt;
+    
+    // Determine required context
+    int requiredContext = 1024;
+    String truncatedContent = "";
+    if (_attachedFileContent != null) {
+      truncatedContent = _attachedFileContent!;
+      if (truncatedContent.length > 3000) {
+        requiredContext = 4096;
+        if (truncatedContent.length > 12000) {
+          truncatedContent = truncatedContent.substring(0, 12000) + "... [Document Truncated]";
+        }
+      }
+    }
+
+    if (_attachedFileContent != null) {
+      finalPrompt = "Document Content (${_attachedFileName}):\n${truncatedContent}\n\nUser Question: ${userPrompt}";
+    }
+
+    // --- ADDED: Show user message IMMEDIATELY for better UX ---
     setState(() {
       _messages.add({'role': 'user', 'content': userPrompt});
-      _messages.add({'role': 'ai', 'content': ''}); // Placeholder for streaming response
+      _messages.add({'role': 'ai', 'content': ''}); // Placeholder for AI
       _controller.clear();
+      _attachedFileName = null; 
+      _attachedFileContent = null;
       _isGenerating = true;
       _isThinking = true;
-      if (_currentChatId == null) {
-        _currentChatId = DateTime.now().millisecondsSinceEpoch.toString();
-      }
     });
-
+    _scrollToBottom();
     final lastIndex = _messages.length - 1;
+
+    // Check if we need to upgrade to Power Mode
+    if (requiredContext > _currentContextSize) {
+      final shouldUpgrade = await _showPowerModeDialog();
+      if (!shouldUpgrade) {
+        // User declined, truncate to Standard Mode limit
+        if (truncatedContent.length > 3000) {
+          truncatedContent = truncatedContent.substring(0, 3000) + "... [Truncated for Fast Mode]";
+        }
+        // Update finalPrompt with truncated version
+        finalPrompt = "Document Content (${_attachedFileName}):\n${truncatedContent}\n\nUser Question: ${userPrompt}";
+        requiredContext = 1024;
+      } else {
+        // User accepted, reload model with larger context
+        setState(() => _isLoadingModel = true);
+        try {
+          await _llmService.loadModel(_lastLoadedModelPath!, contextSize: 4096);
+          _currentContextSize = 4096;
+        } catch (e) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to enter Power Mode: $e')));
+          setState(() {
+            _isLoadingModel = false;
+            _isGenerating = false;
+            _isThinking = false;
+          });
+          return;
+        }
+        setState(() => _isLoadingModel = false);
+      }
+    }
+
+    // Initialize Chat ID if this is the first message
+    if (_currentChatId == null) {
+      _currentChatId = DateTime.now().millisecondsSinceEpoch.toString();
+    }
+
+    // 1. Build the full conversation history for context
+    String fullConversationContext = "";
+    // Dynamic history: 20 messages in Power Mode, 10 in Fast Mode
+    final historyCount = _currentContextSize > 1024 ? 20 : 10;
+    // We sublist from length - historyCount - 2 because we just added 2 messages
+    final contextHistoryLength = _messages.length - 2;
+    final contextMessages = contextHistoryLength > historyCount 
+        ? _messages.sublist(contextHistoryLength - historyCount, contextHistoryLength) 
+        : _messages.sublist(0, contextHistoryLength);
+        
+    for (var msg in contextMessages) {
+      if (msg['role'] == 'user') {
+        fullConversationContext += "<|user|>\n${msg['content']}\n<|end|>\n";
+      } else if (msg['role'] == 'ai' && msg['content']!.isNotEmpty) {
+        fullConversationContext += "<|assistant|>\n${msg['content']}\n<|end|>\n";
+      }
+    }
+
+    // 2. Add the current prompt (with attachment if present)
+    String currentTurn = "<|user|>\n${finalPrompt}\n<|end|>\n<|assistant|>\n";
+    String finalEnginePrompt = fullConversationContext + currentTurn;
     
     try {
-      await for (final token in _llmService.generateResponse(userPrompt)) {
+      await for (final token in _llmService.generateResponse(finalEnginePrompt)) {
         if (_isThinking) {
           setState(() => _isThinking = false);
         }
         setState(() {
           _messages[lastIndex]['content'] = token;
         });
+        _scrollToBottom();
       }
       setState(() {
         _messages[lastIndex]['status'] = 'completed';
@@ -148,6 +232,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         _isGenerating = false;
         _isThinking = false;
       });
+      
+      // Automatically switch back to Fast Mode if we were in Power Mode
+      if (_currentContextSize > 1024 && _lastLoadedModelPath != null) {
+        // We do this in the background to keep the UI responsive
+        _llmService.loadModel(_lastLoadedModelPath!, contextSize: 1024).then((_) {
+          setState(() => _currentContextSize = 1024);
+        });
+      }
     }
   }
 
@@ -159,6 +251,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       _currentChatId = DateTime.now().millisecondsSinceEpoch.toString();
     });
     _saveCurrentChat();
+  }
+
+  void _scrollToBottom() {
+    if (_scrollController.hasClients) {
+      Future.delayed(const Duration(milliseconds: 50), () {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      });
+    }
   }
 
   void _saveCurrentChat() {
@@ -178,14 +282,83 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
   }
 
+  void _startNewChat() {
+    setState(() {
+      _messages = [];
+      _currentChatId = null;
+      _attachedFileName = null;
+      _attachedFileContent = null;
+    });
+    // Reset to Fast Mode for new conversations if currently in Power Mode
+    if (_currentContextSize > 1024 && _lastLoadedModelPath != null) {
+      _llmService.loadModel(_lastLoadedModelPath!, contextSize: 1024);
+      _currentContextSize = 1024;
+    }
+  }
+
+  Future<bool> _showPowerModeDialog() async {
+    return await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Enter Power Mode?'),
+        content: const Text(
+          'This document is large and requires more memory to process accurately. '
+          'Power Mode uses more RAM and might be slower to start, but allows for much better document analysis.\n\n'
+          'Continue in Power Mode?'
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Use Fast Mode (Truncated)'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Enter Power Mode'),
+          ),
+        ],
+      ),
+    ) ?? false;
+  }
+
   void _loadChat(Map chat) {
     setState(() {
       _currentChatId = chat['id'];
+      _attachedFileName = null;
+      _attachedFileContent = null;
       _messages = List<Map<String, String>>.from(
         (chat['messages'] as List).map((m) => Map<String, String>.from(m as Map))
       );
     });
     Navigator.pop(context); // Close drawer
+  }
+
+  Future<void> _pickFile() async {
+    try {
+      FilePickerResult? result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'txt'],
+      );
+
+      if (result != null) {
+        final file = result.files.first;
+        String content = "";
+
+        if (file.extension == 'pdf') {
+          content = await ReadPdfText.getPDFtext(file.path!);
+        } else if (file.extension == 'txt') {
+          content = await File(file.path!).readAsString();
+        }
+
+        setState(() {
+          _attachedFileName = file.name;
+          _attachedFileContent = content;
+        });
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error reading file: $e'), backgroundColor: Colors.red),
+      );
+    }
   }
 
   @override
@@ -206,12 +379,32 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               Text('Offline • $_loadedModelName', style: const TextStyle(fontSize: 10, color: Colors.green)),
           ],
         ),
-        actions: const [],
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: Chip(
+              label: Text(
+                _currentContextSize > 1024 ? 'Power Mode' : 'Fast Mode',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: _currentContextSize > 1024 ? Colors.orange : Theme.of(context).colorScheme.primary,
+                ),
+              ),
+              backgroundColor: _currentContextSize > 1024 
+                ? Colors.orange.withOpacity(0.1) 
+                : Theme.of(context).colorScheme.primaryContainer.withOpacity(0.3),
+              side: BorderSide.none,
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+        ],
       ),
       body: Column(
         children: [
           Expanded(
             child: ListView.builder(
+              controller: _scrollController,
               padding: const EdgeInsets.all(16),
               itemCount: _messages.length,
               itemBuilder: (context, index) {
@@ -253,7 +446,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         await _llmService.loadModel(path);
         setState(() {
           _isGenerating = false;
+          _isLoadingModel = false;
           _loadedModelName = name;
+          _lastLoadedModelPath = path;
+          _currentContextSize = 1024; // Default to fast mode on load
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Model $name loaded successfully!')),
           );
@@ -396,7 +592,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
       setState(() {
         _loadedModelName = model.name;
+        _lastLoadedModelPath = path;
         _isLoadingModel = false;
+        _currentContextSize = 1024;
       });
       
       if (mounted && !isAutoLoad) {
@@ -514,44 +712,78 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
       ),
       child: SafeArea(
-        child: Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Expanded(
-              child: TextField(
-                controller: _controller,
-                decoration: InputDecoration(
-                  hintText: 'Ask anything...',
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(30),
-                    borderSide: BorderSide.none,
-                  ),
-                  filled: true,
-                  fillColor: Theme.of(context).colorScheme.surface,
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            if (_attachedFileName != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Row(
+                  children: [
+                    Chip(
+                      avatar: const Icon(Icons.description_rounded, size: 16),
+                      label: Text(_attachedFileName!, style: const TextStyle(fontSize: 12)),
+                      onDeleted: () {
+                        setState(() {
+                          _attachedFileName = null;
+                          _attachedFileContent = null;
+                        });
+                      },
+                      deleteIconColor: Colors.red,
+                      backgroundColor: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.5),
+                    ),
+                  ],
                 ),
-                onSubmitted: (_) => _sendMessage(),
               ),
-            ),
-            ListenableBuilder(
-              listenable: _controller,
-              builder: (context, _) {
-                final canSend = _controller.text.trim().isNotEmpty && !_isGenerating;
-                return FloatingActionButton(
-                  onPressed: canSend ? _sendMessage : null,
-                  mini: true,
-                  elevation: 0,
-                  hoverElevation: 0,
-                  focusElevation: 0,
-                  highlightElevation: 0,
-                  backgroundColor: canSend 
-                    ? Theme.of(context).colorScheme.primary 
-                    : Theme.of(context).colorScheme.surfaceVariant,
-                  foregroundColor: canSend 
-                    ? Theme.of(context).colorScheme.onPrimary 
-                    : Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.3),
-                  child: const Icon(Icons.send_rounded),
-                );
-              },
+            Row(
+              children: [
+                IconButton(
+                  onPressed: _isGenerating ? null : _pickFile,
+                  icon: const Icon(Icons.attach_file_rounded),
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                Expanded(
+                  child: TextField(
+                    controller: _controller,
+                    onChanged: (val) => setState(() {}),
+                    decoration: InputDecoration(
+                      hintText: _attachedFileName != null ? 'Ask about the document...' : 'Ask anything...',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(30),
+                        borderSide: BorderSide.none,
+                      ),
+                      filled: true,
+                      fillColor: Theme.of(context).colorScheme.surface,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                    ),
+                    maxLines: null,
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (_) => _sendMessage(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ListenableBuilder(
+                  listenable: _controller,
+                  builder: (context, _) {
+                    final canSend = (_controller.text.trim().isNotEmpty || _attachedFileContent != null) && !_isGenerating;
+                    return FloatingActionButton(
+                      onPressed: canSend ? _sendMessage : null,
+                      mini: true,
+                      elevation: 0,
+                      hoverElevation: 0,
+                      focusElevation: 0,
+                      highlightElevation: 0,
+                      backgroundColor: canSend 
+                        ? Theme.of(context).colorScheme.primary 
+                        : Theme.of(context).colorScheme.surfaceVariant,
+                      foregroundColor: canSend 
+                        ? Theme.of(context).colorScheme.onPrimary 
+                        : Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.3),
+                      child: const Icon(Icons.send_rounded),
+                    );
+                  },
+                ),
+              ],
             ),
           ],
         ),

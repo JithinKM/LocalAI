@@ -8,7 +8,7 @@ class GemmaService implements LlmService {
   LlamaBackend? _backend;
   
   @override
-  Future<void> loadModel(String path) async {
+  Future<void> loadModel(String path, {int contextSize = 1024}) async {
     try {
       // Full teardown of previous model
       await unloadModel();
@@ -17,13 +17,13 @@ class GemmaService implements LlmService {
       _backend = LlamaBackend();
       _engine = LlamaEngine(_backend!);
       
-      // Use optimized parameters from the reference project
+      // Use optimized parameters for maximum compatibility
       final params = ModelParams(
-        contextSize: Platform.isAndroid ? 1024 : 2048,
-        gpuLayers: 20, // Reasonable default for Pixel 6a
-        preferredBackend: GpuBackend.vulkan, // Standard for Android GenAI
+        contextSize: contextSize,
+        gpuLayers: 0, // Disable GPU layers by default for maximum stability
+        preferredBackend: GpuBackend.cpu, 
         numberOfThreads: Platform.numberOfProcessors > 4 ? 4 : 0,
-        numberOfThreadsBatch: Platform.numberOfProcessors > 4 ? 4 : 0,
+        numberOfThreadsBatch: 0, // Let engine decide
       );
 
       await _engine!.loadModel(path, modelParams: params);
@@ -43,11 +43,8 @@ class GemmaService implements LlmService {
     }
 
     try {
-      // Use a basic ChatML-like prompt template
-      final fullPrompt = "<|user|>\n$prompt\n<|end|>\n<|assistant|>\n";
-      
       String accumulated = "";
-      await for (final token in _engine!.generate(fullPrompt)) {
+      await for (final token in _engine!.generate(prompt)) {
         accumulated += token;
         // Clean up stop patterns
         if (accumulated.contains("<|end|>") || accumulated.contains("<|user|>")) {

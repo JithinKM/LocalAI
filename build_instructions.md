@@ -37,7 +37,7 @@ Once the build completes, the APK is located at:
 ### 5. Deployment / Renaming
 To rename and move the file to your desktop (macOS example):
 ```bash
-cp build/app/outputs/flutter-apk/app-release.apk ~/Desktop/local-ai-1.0.0.apk
+cp build/app/outputs/flutter-apk/app-release.apk ~/Desktop/local-ai-2.0.0.apk
 ```
 
 ## ⚙️ Build Configurations (Android)
