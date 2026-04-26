@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:file_picker/file_picker.dart';
 import 'services/llm_service.dart';
@@ -9,6 +11,7 @@ import 'services/model_state_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:read_pdf_text/read_pdf_text.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -201,7 +204,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     }
 
     // 2. Add the current prompt (with attachment if present)
-    String currentTurn = "<|user|>\n${finalPrompt}\n<|end|>\n<|assistant|>\n";
+    const formattingInstruction =
+        "When helpful, format your response with Markdown using headings, bold, italics, bullet lists, numbered lists, inline code, code blocks, and links.";
+    String currentTurn = "<|user|>\n$formattingInstruction\n\n${finalPrompt}\n<|end|>\n<|assistant|>\n";
     String finalEnginePrompt = fullConversationContext + currentTurn;
     
     try {
@@ -527,6 +532,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                           progress: progress,
                           isDownloaded: isDownloaded,
                           isDownloading: downloadState.activeDownloads.contains(model.name),
+                          isSelected: _loadedModelName == model.name,
                           onDownload: () async {
                             try {
                               await ref.read(modelDownloadProvider.notifier).startDownload(model);
@@ -797,6 +803,7 @@ class _ModelListItem extends StatelessWidget {
   final double progress;
   final bool isDownloaded;
   final bool isDownloading;
+  final bool isSelected;
   final VoidCallback onDownload;
   final VoidCallback onSelect;
 
@@ -805,19 +812,29 @@ class _ModelListItem extends StatelessWidget {
     required this.progress,
     required this.isDownloaded,
     required this.isDownloading,
+    required this.isSelected,
     required this.onDownload,
     required this.onSelect,
   });
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
+      color: isSelected
+          ? colorScheme.primaryContainer.withOpacity(0.35)
+          : colorScheme.surface,
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withOpacity(0.5)),
+        side: BorderSide(
+          color: isSelected
+              ? colorScheme.primary
+              : colorScheme.outlineVariant.withOpacity(0.5),
+          width: isSelected ? 1.5 : 1,
+        ),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -828,23 +845,62 @@ class _ModelListItem extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.primaryContainer,
+                    color: isSelected
+                        ? colorScheme.primary.withOpacity(0.14)
+                        : colorScheme.primaryContainer,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Icon(Icons.psychology, color: Theme.of(context).colorScheme.primary),
+                  child: Icon(Icons.psychology, color: colorScheme.primary),
                 ),
                 const SizedBox(width: 16),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(model.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                      Text('${model.size} • ${model.version}', style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12)),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              model.name,
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                                color: isSelected ? colorScheme.primary : null,
+                              ),
+                            ),
+                          ),
+                          if (isSelected)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: colorScheme.primary,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                'Current',
+                                style: TextStyle(
+                                  color: colorScheme.onPrimary,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      Text(
+                        '${model.size} • ${model.version}',
+                        style: TextStyle(
+                          color: colorScheme.onSurfaceVariant,
+                          fontSize: 12,
+                        ),
+                      ),
                     ],
                   ),
                 ),
-                if (isDownloaded)
+                if (isDownloaded && !isSelected)
                   ElevatedButton(onPressed: onSelect, child: const Text('Use'))
+                else if (isDownloaded && isSelected)
+                  const SizedBox.shrink()
                 else if (isDownloading)
                   TextButton.icon(
                     onPressed: null, 
@@ -908,6 +964,8 @@ class _ChatBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Column(
@@ -917,8 +975,8 @@ class _ChatBubble extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             decoration: BoxDecoration(
               color: isAi 
-                ? Theme.of(context).colorScheme.surfaceVariant 
-                : Theme.of(context).colorScheme.primary,
+                ? colorScheme.surfaceContainerHighest
+                : colorScheme.primary,
               borderRadius: BorderRadius.only(
                 topLeft: const Radius.circular(20),
                 topRight: const Radius.circular(20),
@@ -931,14 +989,12 @@ class _ChatBubble extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (content.isNotEmpty)
-                  Text(
-                    content,
-                    style: TextStyle(
-                      color: isAi 
-                        ? Theme.of(context).colorScheme.onSurfaceVariant 
-                        : Theme.of(context).colorScheme.onPrimary,
-                    ),
-                  ),
+                  isAi
+                      ? _FormattedAiMessage(content: content)
+                      : SelectableText(
+                          content,
+                          style: TextStyle(color: colorScheme.onPrimary),
+                        ),
                 if (action == 'show_store') ...[
                   const SizedBox(height: 12),
                   ElevatedButton.icon(
@@ -947,8 +1003,8 @@ class _ChatBubble extends StatelessWidget {
                     label: const Text('Go to Store'),
                     style: ElevatedButton.styleFrom(
                       visualDensity: VisualDensity.compact,
-                      backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-                      foregroundColor: Theme.of(context).colorScheme.onPrimaryContainer,
+                      backgroundColor: colorScheme.primaryContainer,
+                      foregroundColor: colorScheme.onPrimaryContainer,
                     ),
                   ),
                 ],
@@ -968,7 +1024,7 @@ class _ChatBubble extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                     Text('Thinking...', 
-                      style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.primary, fontStyle: FontStyle.italic)),
+                      style: TextStyle(fontSize: 12, color: colorScheme.primary, fontStyle: FontStyle.italic)),
                   ],
                 ),
               )
@@ -978,14 +1034,14 @@ class _ChatBubble extends StatelessWidget {
                 child: Row(
                   children: [
                     Text('Generating', 
-                      style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.outline.withOpacity(0.5))),
+                      style: TextStyle(fontSize: 10, color: colorScheme.outline.withValues(alpha: 0.5))),
                     const SizedBox(width: 4),
                     SizedBox(
                       width: 10,
                       height: 10,
                       child: CircularProgressIndicator(
                         strokeWidth: 1.5, 
-                        color: Theme.of(context).colorScheme.outline.withOpacity(0.5),
+                        color: colorScheme.outline.withValues(alpha: 0.5),
                       ),
                     ),
                   ],
@@ -997,10 +1053,10 @@ class _ChatBubble extends StatelessWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.check_circle_outline_rounded, size: 12, color: Colors.teal.withOpacity(0.5)),
+                    Icon(Icons.check_circle_outline_rounded, size: 12, color: Colors.teal.withValues(alpha: 0.5)),
                     const SizedBox(width: 4),
                     Text('Response complete', 
-                      style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.outline.withOpacity(0.5))),
+                      style: TextStyle(fontSize: 10, color: colorScheme.outline.withValues(alpha: 0.5))),
                   ],
                 ),
               ),
@@ -1008,5 +1064,130 @@ class _ChatBubble extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _FormattedAiMessage extends StatelessWidget {
+  final String content;
+
+  const _FormattedAiMessage({required this.content});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    return MarkdownBody(
+      data: _normalizeMarkdown(content),
+      selectable: true,
+      softLineBreak: true,
+      onTapLink: (text, href, title) => _handleLinkTap(context, href ?? text),
+      styleSheet: MarkdownStyleSheet(
+        p: TextStyle(
+          color: colorScheme.onSurfaceVariant,
+          fontSize: 15,
+          height: 1.5,
+        ),
+        strong: TextStyle(
+          color: colorScheme.onSurface,
+          fontWeight: FontWeight.w700,
+        ),
+        em: TextStyle(
+          color: Colors.deepOrange.shade400,
+          fontStyle: FontStyle.italic,
+        ),
+        a: TextStyle(
+          color: Colors.blue.shade700,
+          decoration: TextDecoration.underline,
+          fontWeight: FontWeight.w600,
+        ),
+        h1: TextStyle(
+          color: colorScheme.primary,
+          fontSize: 22,
+          fontWeight: FontWeight.w800,
+        ),
+        h2: TextStyle(
+          color: Colors.teal.shade700,
+          fontSize: 19,
+          fontWeight: FontWeight.w700,
+        ),
+        h3: TextStyle(
+          color: Colors.orange.shade800,
+          fontSize: 17,
+          fontWeight: FontWeight.w700,
+        ),
+        code: TextStyle(
+          color: Colors.pink.shade300,
+          fontFamily: 'monospace',
+          fontSize: 14,
+        ),
+        codeblockDecoration: BoxDecoration(
+          color: colorScheme.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colorScheme.outlineVariant.withValues(alpha: 0.4)),
+        ),
+        blockquote: TextStyle(
+          color: Colors.purple.shade300,
+          fontStyle: FontStyle.italic,
+          height: 1.5,
+        ),
+        blockquoteDecoration: BoxDecoration(
+          color: Colors.purple.shade50.withValues(alpha: 0.55),
+          borderRadius: BorderRadius.circular(12),
+          border: Border(
+            left: BorderSide(color: Colors.purple.shade300, width: 4),
+          ),
+        ),
+        listBullet: TextStyle(
+          color: colorScheme.primary,
+          fontWeight: FontWeight.w700,
+        ),
+        horizontalRuleDecoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.5)),
+          ),
+        ),
+      ),
+    );
+  }
+
+  static String _normalizeMarkdown(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return value;
+
+    final hasMarkdown = RegExp(
+      r'(^#{1,6}\s)|(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(```)|(`[^`\n]+`)|(\[[^\]]+\]\([^)]+\))|(^\s*[-*+]\s)|(^\s*\d+\.\s)|(>\s)',
+      multiLine: true,
+    ).hasMatch(trimmed);
+
+    if (hasMarkdown) {
+      return trimmed;
+    }
+
+    return trimmed;
+  }
+
+  static Future<void> _handleLinkTap(BuildContext context, String? href) async {
+    if (href == null || href.isEmpty) {
+      return;
+    }
+
+    final messenger = ScaffoldMessenger.of(context);
+    final uri = Uri.tryParse(href);
+    if (uri == null) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('This link could not be opened.')),
+      );
+      return;
+    }
+
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && context.mounted) {
+      await Clipboard.setData(ClipboardData(text: href));
+      if (context.mounted) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Link could not be opened, so it was copied instead.')),
+        );
+      }
+    }
   }
 }
