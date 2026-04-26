@@ -1,4 +1,4 @@
-# Local AI (Multiplatform/Android)
+# Local AI (Android)
 
 A premium, minimalistic, and 100% offline AI chat application. Built with Flutter and powered by the high-performance `llamadart` engine, designed for high-speed inference on mobile devices.
 
@@ -6,12 +6,12 @@ A premium, minimalistic, and 100% offline AI chat application. Built with Flutte
 
 | Platform | Architecture | Download Link |
 | :--- | :--- | :--- |
-| **Android** | ARM 64-bit (Most Phones) | [**Download APK (v2.1.1)**](https://github.com/JithinKM/LocalAI/releases/tag/v2.1.1) |
-| **Android** | ARM 32-bit (Legacy) | [**Download APK (v2.1.1)**](https://github.com/JithinKM/LocalAI/releases/tag/v2.1.1) |
-| **Android** | x86_64 (Emulators) | [**Download APK (v2.1.1)**](https://github.com/JithinKM/LocalAI/releases/tag/v2.1.1) |
+| **Android** | **Recommended** (Modern Phones) | [**Download APK (v2.1.1)**](https://github.com/JithinKM/LocalAI/releases/download/v2.1.1/app-arm64-v8a-release.apk) |
+| **Android** | **Compatibility** (Older Phones) | [**Download APK (v2.1.1)**](https://github.com/JithinKM/LocalAI/releases/download/v2.1.1/app-armeabi-v7a-release.apk) |
+| **Android** | **Emulators** (PC / Desktop) | [**Download APK (v2.1.1)**](https://github.com/JithinKM/LocalAI/releases/download/v2.1.1/app-x86_64-release.apk) |
 
 > [!TIP]
-> For the best performance on modern devices, use the **ARM 64-bit** version.
+> Not sure which one to pick? Download the **Recommended** version for the best experience on almost all modern devices.
 
 ## ✨ Key Features
 
