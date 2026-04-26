@@ -2,6 +2,17 @@
 
 A premium, minimalistic, and 100% offline AI chat application. Built with Flutter and powered by the high-performance `llamadart` engine, designed for high-speed inference on mobile devices.
 
+## 📥 Download
+
+| Platform | Architecture | Download Link |
+| :--- | :--- | :--- |
+| **Android** | ARM 64-bit (Most Phones) | [**Download APK (v2.1.1)**](https://github.com/JithinKM/LocalAI/releases/tag/v2.1.1) |
+| **Android** | ARM 32-bit (Legacy) | [**Download APK (v2.1.1)**](https://github.com/JithinKM/LocalAI/releases/tag/v2.1.1) |
+| **Android** | x86_64 (Emulators) | [**Download APK (v2.1.1)**](https://github.com/JithinKM/LocalAI/releases/tag/v2.1.1) |
+
+> [!TIP]
+> For the best performance on modern devices, use the **ARM 64-bit** version.
+
 ## ✨ Key Features
 
 - **100% Private & Offline**: No data ever leaves your device. All inference happens locally using `llamadart`.
