@@ -65,6 +65,7 @@ class ChatScreen extends ConsumerStatefulWidget {
 
 class _ChatScreenState extends ConsumerState<ChatScreen> {
   final TextEditingController _controller = TextEditingController();
+  final FocusNode _focusNode = FocusNode();
   List<Map<String, String>> _messages = [
     {'role': 'ai', 'content': 'Hello! I am your offline AI. How can I help you today?'},
   ];
@@ -73,6 +74,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void initState() {
     super.initState();
     _tryAutoLoadModel();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
   }
 
   Future<void> _tryAutoLoadModel() async {
@@ -246,6 +254,22 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         });
       }
     }
+  }
+
+  void _editMessage(int index) {
+    if (_isGenerating) return;
+    
+    final content = _messages[index]['content'] ?? '';
+    
+    setState(() {
+      _controller.text = content;
+      // Remove all messages from this one onwards
+      _messages.removeRange(index, _messages.length);
+      _attachedFileName = null;
+      _attachedFileContent = null;
+    });
+    
+    _focusNode.requestFocus();
   }
 
   void _createNewChat() {
@@ -422,6 +446,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   isThinking: msg['role'] == 'ai' && _isThinking && index == _messages.length - 1,
                   isGenerating: msg['role'] == 'ai' && _isGenerating && index == _messages.length - 1 && !_isThinking,
                   status: msg['status'],
+                  onEdit: msg['role'] == 'user' ? () => _editMessage(index) : null,
                 );
               },
             ),
@@ -751,6 +776,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 Expanded(
                   child: TextField(
                     controller: _controller,
+                    focusNode: _focusNode,
                     onChanged: (val) => setState(() {}),
                     decoration: InputDecoration(
                       hintText: _attachedFileName != null ? 'Ask about the document...' : 'Ask anything...',
@@ -952,6 +978,8 @@ class _ChatBubble extends StatelessWidget {
   final bool isGenerating;
   final String? status;
 
+  final VoidCallback? onEdit;
+
   const _ChatBubble({
     required this.content, 
     required this.isAi,
@@ -960,6 +988,7 @@ class _ChatBubble extends StatelessWidget {
     this.isThinking = false,
     this.isGenerating = false,
     this.status,
+    this.onEdit,
   });
 
   @override
@@ -1057,10 +1086,56 @@ class _ChatBubble extends StatelessWidget {
                     const SizedBox(width: 4),
                     Text('Response complete', 
                       style: TextStyle(fontSize: 10, color: colorScheme.outline.withValues(alpha: 0.5))),
+                    const SizedBox(width: 8),
+                    InkWell(
+                      borderRadius: BorderRadius.circular(4),
+                      onTap: () {
+                        Clipboard.setData(ClipboardData(text: content));
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Copied to clipboard'),
+                            duration: Duration(seconds: 1),
+                            behavior: SnackBarBehavior.floating,
+                            width: 200,
+                          ),
+                        );
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.copy_rounded, size: 10, color: colorScheme.primary.withValues(alpha: 0.7)),
+                            const SizedBox(width: 2),
+                            Text('Copy', style: TextStyle(fontSize: 10, color: colorScheme.primary.withValues(alpha: 0.7), fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
           ],
+          if (!isAi && onEdit != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4, right: 4),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(4),
+                onTap: onEdit,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('Edit', 
+                        style: TextStyle(fontSize: 10, color: colorScheme.outline.withValues(alpha: 0.7), fontWeight: FontWeight.bold)),
+                      const SizedBox(width: 4),
+                      Icon(Icons.edit_rounded, size: 12, color: colorScheme.outline.withValues(alpha: 0.7)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
