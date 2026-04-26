@@ -1,6 +1,6 @@
 # Local AI (Multiplatform/Android)
 
-A premium, minimalistic, and 100% offline AI chat application. Built with Flutter and powered by the high-performance `llamadart` engine, designed for high-speed inference on mobile devices (Optimized for Pixel 6a).
+A premium, minimalistic, and 100% offline AI chat application. Built with Flutter and powered by the high-performance `llamadart` engine, designed for high-speed inference on mobile devices.
 
 ## ✨ Key Features
 
