@@ -1,0 +1,28 @@
+name: gemma_local
+description: A modern, minimalistic offline AI chat app for Android.
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^2.6.1
+  google_fonts: ^8.0.2
+  intl: ^0.20.2
+  path_provider: ^2.1.2
+  file_picker: ^11.0.2
+  dio: ^5.9.2
+  llamadart: ^0.6.10
+  shared_preferences: ^2.5.2
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
