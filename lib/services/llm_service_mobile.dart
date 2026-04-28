@@ -8,7 +8,7 @@ class GemmaService implements LlmService {
   LlamaBackend? _backend;
   
   @override
-  Future<void> loadModel(String path, {int contextSize = 1024}) async {
+  Future<void> loadModel(String path, {int contextSize = 2048}) async {
     try {
       // Full teardown of previous model
       await unloadModel();
@@ -46,11 +46,26 @@ class GemmaService implements LlmService {
       String accumulated = "";
       await for (final token in _engine!.generate(prompt)) {
         accumulated += token;
-        // Clean up stop patterns
-        if (accumulated.contains("<|end|>") || accumulated.contains("<|user|>")) {
-          break;
+        
+        bool shouldBreak = false;
+        if (accumulated.contains("<|end|>")) {
+          accumulated = accumulated.split("<|end|>").first;
+          shouldBreak = true;
         }
-        yield accumulated;
+        if (accumulated.contains("<|user|>")) {
+          accumulated = accumulated.split("<|user|>").first;
+          shouldBreak = true;
+        }
+        if (accumulated.contains("<|assistant|>")) {
+          accumulated = accumulated.split("<|assistant|>").first;
+          shouldBreak = true;
+        }
+        
+        // Filter out common EOF/null symbols
+        final cleaned = accumulated.replaceAll('\u0000', '').replaceAll('\ufffd', '');
+        yield cleaned;
+        
+        if (shouldBreak) break;
       }
     } catch (e) {
       yield "Error during generation: $e";
